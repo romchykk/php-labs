@@ -35,7 +35,7 @@ $averageGrade = $totalGrade / count($students);
 <body>
     <h2>Список студентів</h2>
     <ul>
-        <!--Виведення даних через цикл
+        <!-- Виведення даних через цикл -->
         <?php foreach ($students as $student): ?>
             <?php 
             //Умовна логіка
