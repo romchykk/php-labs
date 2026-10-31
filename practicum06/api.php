@@ -8,48 +8,73 @@
  *   GET  /api.php?resource=students&id=N      — один студент або 404
  *   POST /api.php?resource=students           — створити студента (201)
  *   POST /api.php?resource=students&action=top — студент з найвищим балом у групі
+ *
+ * Межі: average_grade 0–100; name ≤ 120 символів, group_name ≤ 60 (див. schema.sql)
  */
 
 declare(strict_types=1);
 
-// ─── Крок 2. Заголовок JSON для всіх відповідей ────────────────────────────
+// Глобальний обробник необроблених винятків — гарантує JSON навіть при PDOException
+// Попередження/notice не повинні потрапляти у відповідь як HTML зі шляхами файлів
+ini_set('display_errors', '0');
+
+set_exception_handler(function (Throwable $e): void {
+    error_log((string) $e);
+    // Заголовок міг ще не бути встановлений
+    if (!headers_sent()) {
+        header('Content-Type: application/json; charset=utf-8');
+    }
+    http_response_code(500);
+    // Деталі помилки НЕ передаємо клієнту — лише загальне повідомлення
+    echo json_encode(
+        ['success' => false, 'error' => 'Внутрішня помилка сервера'],
+        JSON_UNESCAPED_UNICODE
+    );
+    exit;
+});
+
+// ─── Заголовок JSON для всіх відповідей ────────────────────────────────────
 header('Content-Type: application/json; charset=utf-8');
 
-// Підключення конфігурації та отримання PDO
 require_once __DIR__ . '/config.php';
 $pdo = getPdo();
 
 // ─── Читання параметрів запиту ──────────────────────────────────────────────
-$method   = $_SERVER['REQUEST_METHOD'];   // GET, POST, …
-$resource = $_GET['resource'] ?? null;    // students, …
-$id       = $_GET['id']       ?? null;    // числовий id або null
-$action   = $_GET['action']   ?? null;    // доменна дія або null
+$method   = $_SERVER['REQUEST_METHOD'];
+$resource = $_GET['resource'] ?? null;
+$id       = $_GET['id']       ?? null;
+$action   = $_GET['action']   ?? null;
 
-// ─── Крок 3. Маршрутизація ──────────────────────────────────────────────────
+// Параметри маршрутизації мають бути рядками (захист від ?action[]=x)
+foreach ([$resource, $id, $action] as $param) {
+    if ($param !== null && !is_string($param)) {
+        sendError(400, 'Параметри запиту мають бути рядками');
+    }
+}
+
+// ─── Маршрутизація ──────────────────────────────────────────────────────────
 if ($resource === 'students') {
 
     if ($method === 'GET' && $id === null) {
-        // GET /api.php?resource=students
         listStudents($pdo);
 
     } elseif ($method === 'GET' && $id !== null) {
-        // GET /api.php?resource=students&id=N
-        getStudent($pdo, (int) $id);
+        $validId = filter_var($id, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if ($validId === false) {
+            sendError(400, 'Параметр id має бути додатним цілим числом');
+        }
+        getStudent($pdo, $validId);
 
     } elseif ($method === 'POST' && $action === null) {
-        // POST /api.php?resource=students  — створення
         createStudent($pdo);
 
     } elseif ($method === 'POST' && $action === 'top') {
-        // POST /api.php?resource=students&action=top — доменна дія
         topStudentInGroup($pdo);
 
     } elseif ($method === 'POST') {
-        // POST з невідомою action
         sendError(400, "Невідома дія: «{$action}». Підтримується лише action=top");
 
     } else {
-        // Метод не підтримується для ресурсу students (наприклад PUT/DELETE)
         http_response_code(405);
         header('Allow: GET, POST');
         echo json_encode(
@@ -59,7 +84,6 @@ if ($resource === 'students') {
     }
 
 } else {
-    // Невідомий ресурс
     sendError(404, 'Невідомий ресурс. Доступні: students');
 }
 
@@ -67,16 +91,11 @@ if ($resource === 'students') {
 //  ФУНКЦІЇ-ОБРОБНИКИ
 // ════════════════════════════════════════════════════════════════════════════
 
-/**
- * Крок 4а. GET — список усіх студентів.
- * 200 + масив записів.
- */
 function listStudents(PDO $pdo): void
 {
-    $stmt = $pdo->query('SELECT id, name, group_name, average_grade FROM students ORDER BY id');
+    $stmt     = $pdo->query('SELECT id, name, group_name, average_grade FROM students ORDER BY id');
     $students = $stmt->fetchAll();
 
-    // Числові поля повертаємо як числа, а не рядки
     foreach ($students as &$s) {
         $s['id']            = (int)   $s['id'];
         $s['average_grade'] = (float) $s['average_grade'];
@@ -86,10 +105,6 @@ function listStudents(PDO $pdo): void
     sendSuccess(200, $students);
 }
 
-/**
- * Крок 4б. GET — один студент за id.
- * 200 + об'єкт або 404.
- */
 function getStudent(PDO $pdo, int $id): void
 {
     $stmt = $pdo->prepare(
@@ -108,40 +123,53 @@ function getStudent(PDO $pdo, int $id): void
     sendSuccess(200, $student);
 }
 
-/**
- * Крок 5. POST — створення нового студента.
- * Обов'язкові поля: name, group_name, average_grade.
- * 201 + створений запис або 400.
- */
 function createStudent(PDO $pdo): void
 {
-    // Підтримуємо як form-data, так і JSON-тіло
     $input = getInput();
 
-    // Перевірка обов'язкових полів
-    $required = ['name', 'group_name', 'average_grade'];
-    foreach ($required as $field) {
-        if (!isset($input[$field]) || trim((string) $input[$field]) === '') {
+    // Перевірка що поля є рядками, а не масивами
+    foreach (['name', 'group_name', 'average_grade'] as $field) {
+        if (!isset($input[$field])) {
             sendError(400, "Відсутнє обов'язкове поле: {$field}");
+        }
+        if (is_array($input[$field])) {
+            sendError(400, "Поле {$field} має бути рядком, а не масивом");
         }
     }
 
-    $name          = trim($input['name']);
-    $groupName     = trim($input['group_name']);
-    $averageGrade  = filter_var($input['average_grade'], FILTER_VALIDATE_FLOAT);
+    $name      = trim((string) $input['name']);
+    $groupName = trim((string) $input['group_name']);
 
-    // Додаткова валідація
+    // Валідація name
+    if ($name === '') {
+        sendError(400, "Відсутнє обов'язкове поле: name");
+    }
     if (mb_strlen($name) < 2) {
         sendError(400, "Поле name надто коротке (мінімум 2 символи)");
     }
+    if (mb_strlen($name) > 120) {
+        sendError(400, "Поле name надто довге (максимум 120 символів)");
+    }
+
+    // Валідація group_name
+    if ($groupName === '') {
+        sendError(400, "Відсутнє обов'язкове поле: group_name");
+    }
+    if (mb_strlen($groupName) > 60) {
+        sendError(400, "Поле group_name надто довге (максимум 60 символів)");
+    }
+
+    // Валідація average_grade
+    $averageGrade = filter_var($input['average_grade'], FILTER_VALIDATE_FLOAT);
     if ($averageGrade === false) {
         sendError(400, "Поле average_grade має бути числом");
     }
     if ($averageGrade < 0 || $averageGrade > 100) {
         sendError(400, "Поле average_grade має бути в діапазоні 0–100");
     }
+    // Те саме значення, що буде збережене в DECIMAL(5,2)
+    $averageGrade = round($averageGrade, 2);
 
-    // INSERT
     $stmt = $pdo->prepare(
         'INSERT INTO students (name, group_name, average_grade)
          VALUES (:name, :group_name, :average_grade)'
@@ -162,15 +190,18 @@ function createStudent(PDO $pdo): void
     ]);
 }
 
-/**
- * Крок 6. POST action=top — студент з найвищим середнім балом у групі.
- * Обов'язковий параметр: group_name.
- * 200 + об'єкт або 400/404.
- */
 function topStudentInGroup(PDO $pdo): void
 {
-    $input     = getInput();
-    $groupName = isset($input['group_name']) ? trim($input['group_name']) : '';
+    $input = getInput();
+
+    if (!isset($input['group_name'])) {
+        sendError(400, "Відсутнє обов'язкове поле: group_name");
+    }
+    if (is_array($input['group_name'])) {
+        sendError(400, "Поле group_name має бути рядком, а не масивом");
+    }
+
+    $groupName = trim((string) $input['group_name']);
 
     if ($groupName === '') {
         sendError(400, "Відсутнє обов'язкове поле: group_name");
@@ -180,7 +211,7 @@ function topStudentInGroup(PDO $pdo): void
         'SELECT id, name, group_name, average_grade
          FROM students
          WHERE group_name = :group_name
-         ORDER BY average_grade DESC
+         ORDER BY average_grade DESC, id ASC
          LIMIT 1'
     );
     $stmt->execute([':group_name' => $groupName]);
@@ -200,18 +231,12 @@ function topStudentInGroup(PDO $pdo): void
 //  ДОПОМІЖНІ ФУНКЦІЇ
 // ════════════════════════════════════════════════════════════════════════════
 
-/**
- * Читає вхідні дані: спочатку $_POST, потім JSON-тіло (php://input).
- * Повертає асоціативний масив.
- */
 function getInput(): array
 {
-    // Якщо є стандартні POST-параметри — використовуємо їх
     if (!empty($_POST)) {
         return $_POST;
     }
 
-    // Інакше намагаємося розпарсити JSON-тіло
     $raw = file_get_contents('php://input');
     if ($raw !== '' && $raw !== false) {
         $decoded = json_decode($raw, true);
@@ -223,34 +248,22 @@ function getInput(): array
     return [];
 }
 
-/**
- * Відправляє успішну JSON-відповідь і завершує скрипт.
- *
- * @param int   $code  HTTP-код (200, 201, …)
- * @param mixed $data  Дані для поля "data"
- */
 function sendSuccess(int $code, mixed $data): void
 {
     http_response_code($code);
     echo json_encode(
         ['success' => true, 'data' => $data],
-        JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT
+        JSON_UNESCAPED_UNICODE
     );
     exit;
 }
 
-/**
- * Відправляє JSON-відповідь з помилкою і завершує скрипт.
- *
- * @param int    $code    HTTP-код (400, 404, 405, …)
- * @param string $message Опис помилки
- */
 function sendError(int $code, string $message): void
 {
     http_response_code($code);
     echo json_encode(
         ['success' => false, 'error' => $message],
-        JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT
+        JSON_UNESCAPED_UNICODE
     );
     exit;
 }

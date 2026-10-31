@@ -7,30 +7,30 @@ require_once 'db.php';
 header('Content-Type: application/json; charset=utf-8');
 
 try {
-    $q = trim($_GET['q'] ?? '');
+    // Захист від масиву у GET-параметрі
+    $q = isset($_GET['q']) && is_string($_GET['q']) ? trim($_GET['q']) : '';
 
     if ($q !== '') {
-        // Фільтр за group_name (LIKE, регістронезалежний)
+        // Екрануємо спецсимволи LIKE, щоб '%' і '_' шукались буквально
+        $q = addcslashes($q, '%_\\');
         $stmt = $pdo->prepare(
             'SELECT id, name, group_name, average_grade
              FROM students
-             WHERE group_name LIKE :q
-             ORDER BY name ASC'
+             WHERE group_name LIKE :q'
         );
         $stmt->execute([':q' => '%' . $q . '%']);
     } else {
         $stmt = $pdo->query(
             'SELECT id, name, group_name, average_grade
-             FROM students
-             ORDER BY name ASC'
+             FROM students'
         );
     }
 
     $students = $stmt->fetchAll();
-
     echo json_encode($students, JSON_UNESCAPED_UNICODE);
 
 } catch (PDOException $e) {
     http_response_code(500);
-    echo json_encode(['error' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
+    // Не повертаємо деталі винятку клієнту
+    echo json_encode(['error' => 'Внутрішня помилка сервера. Зверніться до адміністратора.'], JSON_UNESCAPED_UNICODE);
 }

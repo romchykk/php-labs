@@ -20,6 +20,7 @@ try {
 } catch (PDOException $e) {
     http_response_code(500);
     header('Content-Type: application/json');
-    echo json_encode(['error' => 'Помилка підключення до БД: ' . $e->getMessage()]);
+    error_log('DB connection failed: ' . $e->getMessage());
+    echo json_encode(['error' => 'Помилка підключення до БД'], JSON_UNESCAPED_UNICODE);
     exit;
 }

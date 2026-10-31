@@ -247,6 +247,37 @@
     }
 
     tr.new-row { animation: rowFlash 1.4s ease-out forwards; }
+
+    /* ---- Сортування ---- */
+    th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+    th.sortable:hover { color: #3a7bd5; }
+    .sort-icon { color: #b0bccd; margin-left: 4px; }
+    .sort-icon.active { color: #3a7bd5; }
+
+    /* ---- Редагування балу ---- */
+    .edit-btn, .save-grade-btn, .cancel-grade-btn {
+      border: none;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      background: #eef2f8;
+      transition: background .15s;
+    }
+    .edit-btn:hover { background: #dce5f0; }
+    .save-grade-btn { background: #22c45e; color: #fff; }
+    .save-grade-btn:hover { background: #15a34a; }
+    .save-grade-btn:disabled { background: #8fd8ab; cursor: not-allowed; }
+    .cancel-grade-btn { background: #ef4444; color: #fff; }
+    .cancel-grade-btn:hover { background: #dc2626; }
+    .grade-input {
+      width: 90px;
+      border: 1.5px solid #3a7bd5;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 0.93rem;
+      outline: none;
+    }
   </style>
 </head>
 <body>

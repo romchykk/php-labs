@@ -5,9 +5,6 @@ require_once 'db.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
-// Дозволяємо POST-запити з того самого Origin (CORS для локальної розробки)
-// header('Access-Control-Allow-Origin: *');
-
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
     echo json_encode(['error' => 'Дозволено лише POST-запити'], JSON_UNESCAPED_UNICODE);
@@ -18,28 +15,46 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
 
 if (str_contains($contentType, 'application/json')) {
-    $body = json_decode(file_get_contents('php://input'), true) ?? [];
-    $name          = trim($body['name']          ?? '');
-    $group_name    = trim($body['group_name']    ?? '');
-    $average_grade = $body['average_grade']      ?? null;
+    $body = json_decode(file_get_contents('php://input'), true);
+    // Захист: json_decode може повернути не масив
+    if (!is_array($body)) { $body = []; }
+    $rawName   = $body['name']          ?? null;
+    $rawGroup  = $body['group_name']    ?? null;
+    $rawGrade  = $body['average_grade'] ?? null;
 } else {
-    $name          = trim($_POST['name']          ?? '');
-    $group_name    = trim($_POST['group_name']    ?? '');
-    $average_grade = $_POST['average_grade']      ?? null;
+    $rawName   = $_POST['name']          ?? null;
+    $rawGroup  = $_POST['group_name']    ?? null;
+    $rawGrade  = $_POST['average_grade'] ?? null;
 }
+
+// Захист від масиву замість рядка (Fatal error при trim([...]))
+if (!is_string($rawName))  { $rawName  = ''; }
+if (!is_string($rawGroup)) { $rawGroup = ''; }
+
+$name        = trim($rawName);
+$group_name  = trim($rawGroup);
+$average_grade = $rawGrade;
 
 // Валідація
 $errors = [];
+
 if ($name === '') {
     $errors[] = 'Поле "ПІБ студента" є обов\'язковим';
 }
 if ($group_name === '') {
     $errors[] = 'Поле "Група" є обов\'язковим';
 }
+
 if ($average_grade === null || $average_grade === '') {
     $errors[] = 'Поле "Середній бал" є обов\'язковим';
-} elseif (!is_numeric($average_grade) || $average_grade < 0 || $average_grade > 100) {
-    $errors[] = 'Середній бал має бути числом від 0 до 100';
+} elseif (!is_numeric($average_grade)) {
+    $errors[] = 'Середній бал має бути числом';
+} else {
+    $gradeFloat = round((float)$average_grade, 2);
+    // DECIMAL(5,2) вміщує 100.00; бізнес-межа — 100
+    if ($gradeFloat < 0 || $gradeFloat > 100) {
+        $errors[] = 'Середній бал має бути числом від 0 до 100';
+    }
 }
 
 if (!empty($errors)) {
@@ -56,12 +71,11 @@ try {
     $stmt->execute([
         ':name'          => $name,
         ':group_name'    => $group_name,
-        ':average_grade' => round((float)$average_grade, 2),
+        ':average_grade' => $gradeFloat,
     ]);
 
     $newId = $pdo->lastInsertId();
 
-    // Повертаємо щойно доданий запис
     $new = $pdo->prepare(
         'SELECT id, name, group_name, average_grade FROM students WHERE id = :id'
     );
@@ -73,5 +87,6 @@ try {
 
 } catch (PDOException $e) {
     http_response_code(500);
-    echo json_encode(['error' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
+    // Не повертаємо деталі винятку клієнту
+    echo json_encode(['error' => 'Внутрішня помилка сервера. Зверніться до адміністратора.'], JSON_UNESCAPED_UNICODE);
 }

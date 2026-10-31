@@ -4,22 +4,17 @@
  * Практична робота №6, Варіант 11
  */
 
-define('DB_HOST', 'localhost');
-define('DB_NAME', 'students_db');
-define('DB_USER', 'root');      // замініть на свого користувача
-define('DB_PASS', '');          // замініть на свій пароль
+define('DB_HOST',    'localhost');
+define('DB_NAME',    'students_db');
+define('DB_USER',    'root');
+define('DB_PASS',    '');
 define('DB_CHARSET', 'utf8mb4');
 
-/**
- * Повертає PDO-з'єднання або завершує виконання скрипта з JSON-помилкою.
- */
 function getPdo(): PDO
 {
     $dsn = sprintf(
         'mysql:host=%s;dbname=%s;charset=%s',
-        DB_HOST,
-        DB_NAME,
-        DB_CHARSET
+        DB_HOST, DB_NAME, DB_CHARSET
     );
 
     $options = [
@@ -31,12 +26,14 @@ function getPdo(): PDO
     try {
         return new PDO($dsn, DB_USER, DB_PASS, $options);
     } catch (PDOException $e) {
-        // Помилка підключення — повертаємо 500
         http_response_code(500);
-        echo json_encode([
-            'success' => false,
-            'error'   => 'Помилка підключення до бази даних: ' . $e->getMessage(),
-        ], JSON_UNESCAPED_UNICODE);
+        header('Content-Type: application/json; charset=utf-8');
+        error_log('DB connection failed: ' . $e->getMessage());
+        // Деталі винятку клієнту НЕ передаємо
+        echo json_encode(
+            ['success' => false, 'error' => 'Не вдалося підключитися до бази даних'],
+            JSON_UNESCAPED_UNICODE
+        );
         exit;
     }
 }
